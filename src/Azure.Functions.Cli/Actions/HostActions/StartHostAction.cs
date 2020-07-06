@@ -152,6 +152,14 @@ namespace Azure.Functions.Cli.Actions.HostActions
         {
             IDictionary<string, string> settings = await GetConfigurationSettings(hostOptions.ScriptPath, baseAddress);
             settings.AddRange(LanguageWorkerHelper.GetWorkerConfiguration(LanguageWorkerSetting));
+
+            settings.TryAdd("logging__logLevel__Host", "Warning");
+            settings.TryAdd("logging__logLevel__Worker", "Warning");
+            settings.TryAdd("logging__logLevel__Microsoft", "Warning");
+            settings.TryAdd("AzureFunctionsJobHost__Logging__LogLevel__Host", "Warning");
+            settings.TryAdd("AzureFunctionsJobHost__Logging__LogLevel__Microsoft", "Warning");
+            settings.TryAdd("ASPNETCORE_SUPPRESSSTATUSMESSAGES", "true");
+
             UpdateEnvironmentVariables(settings);
 
             var defaultBuilder = Microsoft.AspNetCore.WebHost.CreateDefaultBuilder(Array.Empty<string>());
@@ -214,7 +222,7 @@ namespace Azure.Functions.Cli.Actions.HostActions
             {
                 if (string.Equals(secret.Key, Constants.AzureFunctionsEnvorinmentEnvironmentVariable, StringComparison.OrdinalIgnoreCase))
                 {
-                    ColoredConsole.WriteLine($"{Constants.AzureFunctionsEnvorinmentEnvironmentVariable}: {secret.Value}");
+                    //ColoredConsole.WriteLine($"{Constants.AzureFunctionsEnvorinmentEnvironmentVariable}: {secret.Value}");
                     Environment.SetEnvironmentVariable(secret.Key, secret.Value, EnvironmentVariableTarget.Process);
                 }
                 else if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(secret.Key)))
@@ -247,7 +255,7 @@ namespace Azure.Functions.Cli.Actions.HostActions
         public override async Task RunAsync()
         {
             await PreRunConditions();
-            Utilities.PrintLogo();
+            // Utilities.PrintLogo();
             Utilities.PrintVersion();
             ValidateHostJsonConfiguration();
 
@@ -264,8 +272,23 @@ namespace Azure.Functions.Cli.Actions.HostActions
 
             var scriptHost = hostService.Services.GetRequiredService<IScriptJobHost>();
             var httpOptions = hostService.Services.GetRequiredService<IOptions<HttpOptions>>();
+
+            if (scriptHost.Functions.Any())
+            {
+                ColoredConsole
+                    .WriteLine()
+                    .WriteLine(Yellow("Functions:"))
+                    .WriteLine();
+            }
+
             DisplayHttpFunctionsInfo(scriptHost, httpOptions.Value, baseUri);
+            DisplayNonHttpFunctionsInfo(scriptHost);
             DisplayDisabledFunctions(scriptHost);
+
+            ColoredConsole
+                .WriteLine()
+                .WriteLine(Cyan("For detailed output, run func with the --verbose flag."))
+                .WriteLine();
 
             await runTask;
         }
@@ -347,11 +370,15 @@ namespace Azure.Functions.Cli.Actions.HostActions
 
         private void DisplayDisabledFunctions(IScriptJobHost scriptHost)
         {
+            var disabledFunctions = scriptHost.Functions.Where(f => f.Metadata.IsDisabled());
+
             if (scriptHost != null)
             {
-                foreach (var function in scriptHost.Functions.Where(f => f.Metadata.IsDisabled()))
+                foreach (var function in disabledFunctions)
                 {
-                    ColoredConsole.WriteLine(WarningColor($"Function {function.Name} is disabled."));
+                    ColoredConsole
+                        .WriteLine(WarningColor($"Function {function.Name} is disabled."))
+                        .WriteLine();
                 }
             }
         }
@@ -361,13 +388,6 @@ namespace Azure.Functions.Cli.Actions.HostActions
             if (scriptHost != null)
             {
                 var httpFunctions = scriptHost.Functions.Where(f => f.Metadata.IsHttpFunction() && !f.Metadata.IsDisabled());
-                if (httpFunctions.Any())
-                {
-                    ColoredConsole
-                        .WriteLine()
-                        .WriteLine(Yellow("Http Functions:"))
-                        .WriteLine();
-                }
 
                 foreach (var function in httpFunctions)
                 {
@@ -395,6 +415,21 @@ namespace Azure.Functions.Cli.Actions.HostActions
                     var url = $"{baseUri.ToString().Replace("0.0.0.0", "localhost")}{hostRoutePrefix}{httpRoute}";
                     ColoredConsole
                         .WriteLine($"\t{Yellow($"{function.Name}:")} {Green(functionMethods)} {Green(url)}")
+                        .WriteLine();
+                }
+            }
+        }
+
+    private void DisplayNonHttpFunctionsInfo(IScriptJobHost scriptHost)
+        {
+            if (scriptHost != null)
+            {
+                var nonHttpFunctions = scriptHost.Functions.Where(f => !f.Metadata.IsHttpFunction() && !f.Metadata.IsDisabled());
+                foreach (var function in nonHttpFunctions)
+                {
+                    var trigger = function.Metadata.Bindings.FirstOrDefault(b => b.Type != null && b.Type.EndsWith("Trigger", ignoreCase: true, null));
+                    ColoredConsole
+                        .WriteLine($"\t{Yellow($"{function.Name}:")} {trigger?.Type}")
                         .WriteLine();
                 }
             }

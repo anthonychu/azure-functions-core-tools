@@ -29,15 +29,16 @@ namespace Azure.Functions.Cli
            @@    {AlternateLogoColor("%%")}      @@
                 {AlternateLogoColor("%%")}
                 {AlternateLogoColor("%")}"
-                .Replace("@", "@".DarkCyan().ToString()))
-                .WriteLine();
+                .Replace("@", "@".DarkCyan().ToString()));
         }
 
         internal static void PrintVersion()
         {
             ColoredConsole
+                .WriteLine()
                 .WriteLine($"Azure Functions Core Tools ({Constants.CliDetailedVersion})")
-                .WriteLine($"Function Runtime Version: {ScriptHost.Version}");
+                .WriteLine($"Function Runtime Version: {ScriptHost.Version}")
+                .WriteLine();
         }
 
         private static RichString AlternateLogoColor(string str, int firstColorCount = -1)
