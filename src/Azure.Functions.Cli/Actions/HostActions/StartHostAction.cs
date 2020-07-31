@@ -45,6 +45,7 @@ namespace Azure.Functions.Cli.Actions.HostActions
         private const int DefaultPort = 7071;
         private const int DefaultTimeout = 20;
         private readonly ISecretsManager _secretsManager;
+        private readonly KeyVaultReferencesManager _keyVaultReferencesManager;
 
         public int Port { get; set; }
 
@@ -70,6 +71,7 @@ namespace Azure.Functions.Cli.Actions.HostActions
         public StartHostAction(ISecretsManager secretsManager)
         {
             _secretsManager = secretsManager;
+            _keyVaultReferencesManager = new KeyVaultReferencesManager();
         }
 
         public override ICommandLineParserResult ParseArgs(string[] args)
@@ -145,6 +147,7 @@ namespace Azure.Functions.Cli.Actions.HostActions
         {
             IDictionary<string, string> settings = await GetConfigurationSettings(hostOptions.ScriptPath, baseAddress);
             settings.AddRange(LanguageWorkerHelper.GetWorkerConfiguration(LanguageWorkerSetting));
+            _keyVaultReferencesManager.ResolveKeyVaultReferences(settings);
             UpdateEnvironmentVariables(settings);
 
             var defaultBuilder = Microsoft.AspNetCore.WebHost.CreateDefaultBuilder(Array.Empty<string>());
