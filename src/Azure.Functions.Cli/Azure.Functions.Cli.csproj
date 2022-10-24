@@ -173,6 +173,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="WindowsAzure.Storage" Version="9.3.1" />
     <PackageReference Include="YamlDotNet" Version="6.0.0" />
+    <PackageReference Include="Microsoft.VsSaaS.TunnelService.Connections" Version="1.0.7315" />
   </ItemGroup>
   <ItemGroup Condition="'$(NoWorkers)' != 'true'">
     <PackageReference Include="Microsoft.Azure.Functions.JavaWorker" Version="2.4.0" />

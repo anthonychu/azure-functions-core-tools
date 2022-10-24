@@ -1,10 +1,13 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
 using Azure.Functions.Cli.Common;
 using Azure.Functions.Cli.Diagnostics;
@@ -24,6 +27,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.VsSaaS.TunnelService;
+using Microsoft.VsSaaS.TunnelService.Contracts;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using static Azure.Functions.Cli.Common.OutputTheme;
@@ -71,6 +76,12 @@ namespace Azure.Functions.Cli.Actions.HostActions
         public bool? EnableJsonOutput { get; set; }
 
         public string JsonOutputFile { get; set; }
+
+        public bool DevTunnel { get; set; }
+
+        public string DevTunnelName { get; set; }
+
+        public string DevTunnelUrl { get; set; }
 
         public StartHostAction(ISecretsManager secretsManager)
         {
@@ -165,6 +176,12 @@ namespace Azure.Functions.Cli.Actions.HostActions
                .Setup<string>("json-output-file")
                .WithDescription("If provided, a path to the file that will be used to write the output when using --enable-json-output.")
                .Callback(jsonOutputFile => JsonOutputFile = jsonOutputFile);
+
+            Parser
+               .Setup<bool>("devtunnel")
+               .WithDescription("Open an external endpoint to the local Functions host.")
+               .SetDefault(false)
+               .Callback(devtunnel => DevTunnel = devtunnel);
 
             var parserResult = base.ParseArgs(args);
             bool verboseLoggingArgExists = parserResult.UnMatchedOptions.Any(o => o.LongName.Equals("verbose", StringComparison.OrdinalIgnoreCase));
@@ -310,7 +327,8 @@ namespace Azure.Functions.Cli.Actions.HostActions
         {
             foreach (var secret in secrets)
             {
-                if (string.IsNullOrEmpty(secret.Key)) {
+                if (string.IsNullOrEmpty(secret.Key))
+                {
                     ColoredConsole.WriteLine(WarningColor($"Skipping local setting with empty key."));
                 }
                 else if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(secret.Key)))
@@ -360,6 +378,71 @@ namespace Azure.Functions.Cli.Actions.HostActions
 
             ScriptApplicationHostOptions hostOptions = SelfHostWebHostSettingsFactory.Create(Environment.CurrentDirectory);
 
+            if (DevTunnel)
+            {
+                var currentFolderName = Path.GetFileName(Environment.CurrentDirectory);
+
+                // TODO: more robust way to get the tunnel name
+                var tunnelName = string.IsNullOrEmpty(currentFolderName) ? "func" : currentFolderName;
+
+                // TODO: prompt for login
+                var token = Environment.GetEnvironmentVariable("AZURE_FUNCTIONS_DEV_TUNNEL_TOKEN");
+
+                var productInfo = new ProductInfoHeaderValue("AzureFunctionsCoreTools", "4.0.0");
+
+                var manager = new TunnelManagementClient(productInfo, async () =>
+                {
+                    return new AuthenticationHeaderValue("Bearer", token);
+                });
+
+                var tunnels = await manager.ListTunnelsAsync(null, null, null, CancellationToken.None);
+                var existingTunnel = tunnels.FirstOrDefault(t => t.Name == tunnelName);
+                if (existingTunnel != null)
+                {
+                    System.Console.WriteLine($"Tunnel {tunnelName} already exists. Deleting...");
+                    await manager.DeleteTunnelAsync(new Tunnel { Name = tunnelName }, null, CancellationToken.None);
+                }
+                
+                // Create a TraceListener for tunnel host log output.
+                // This creates DefaultTraceListener which outputs to std_out (in VS this will be in the Output tool window).
+                var trace = new TraceSource("TunnelHost");
+                trace.Listeners.Add(new DefaultTraceListener());
+                trace.Switch.Level = SourceLevels.All;
+
+                // Enable anonymous clients to connect to the Tunnel.
+                TunnelAccessControl access = new TunnelAccessControl();
+                access.AllowAnonymous(TunnelAccessScopes.Connect);
+
+                // Create the Tunnel definition.
+                var tunnelDefinition = new Tunnel
+                {
+                    Description = "Azure Functions Core Tools tunnel",
+                    Name = tunnelName,
+                    Ports = new[]
+                    {
+                        // These would be the port/protocol you are mapping to locally
+                        new TunnelPort { PortNumber = 7071, Protocol = TunnelProtocol.Auto },
+                    },
+                    AccessControl = access,
+                };
+
+                // Create the Tunnel from the definition.
+                var tunnel = await manager.CreateTunnelAsync(
+                    tunnelDefinition, options: null, CancellationToken.None);
+                var tunnelPort = tunnel.Ports?.FirstOrDefault();
+
+                // Create and start the host (TunnelRelay).
+                var tunnelHost = new TunnelRelayTunnelHost(manager, trace);
+                await tunnelHost.StartAsync(tunnel, CancellationToken.None);
+
+                // Get the endpoint created by the host. The endpoint has client connection info.
+                var endpoint = tunnel.Endpoints!.OfType<TunnelRelayTunnelEndpoint>().First();
+
+                // Get the resulting Tunnel URI.
+                DevTunnelUrl = TunnelEndpoint.GetPortUri(endpoint, tunnelPort?.PortNumber).ToString();
+                System.Console.WriteLine($"Tunnel {tunnelName} created at {DevTunnelUrl}");
+            }
+
             ValidateAndBuildHostJsonConfigurationIfFileExists(hostOptions);
 
             if (File.Exists(Path.Combine(Environment.CurrentDirectory, Constants.ProxiesJsonFileName)))
@@ -380,8 +463,10 @@ namespace Azure.Functions.Cli.Actions.HostActions
             var httpOptions = hostService.Services.GetRequiredService<IOptions<HttpOptions>>();
             if (scriptHost != null && scriptHost.Functions.Any())
             {
-                DisplayFunctionsInfoUtilities.DisplayFunctionsInfo(scriptHost.Functions, httpOptions.Value, baseUri);
+                var displayUrl = string.IsNullOrEmpty(DevTunnelUrl) ? baseUri : new Uri(DevTunnelUrl);
+                DisplayFunctionsInfoUtilities.DisplayFunctionsInfo(scriptHost.Functions, httpOptions.Value, displayUrl);
             }
+
             if (VerboseLogging == null || !VerboseLogging.Value)
             {
                 ColoredConsole.WriteLine(AdditionalInfoColor("For detailed output, run func with --verbose flag."));
