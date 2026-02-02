@@ -2,8 +2,10 @@
 // Licensed under the MIT License. See LICENSE in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Azure.Functions.Cli.Common;
 using Colors.Net;
 using GitHub.Copilot.SDK;
 using static Azure.Functions.Cli.Common.OutputTheme;
@@ -23,9 +25,11 @@ namespace Azure.Functions.Cli.Actions.ChatActions
             ColoredConsole.Write(QuestionColor("How can I help you? "));
             var initialPrompt = Console.ReadLine()?.Trim() ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(initialPrompt))
+            if (string.IsNullOrWhiteSpace(initialPrompt) ||
+                initialPrompt.Equals("exit", StringComparison.OrdinalIgnoreCase) ||
+                initialPrompt.Equals("quit", StringComparison.OrdinalIgnoreCase))
             {
-                ColoredConsole.WriteLine(AdditionalInfoColor("No input provided. Goodbye!"));
+                ColoredConsole.WriteLine(AdditionalInfoColor("Goodbye!"));
                 return;
             }
 
@@ -45,7 +49,17 @@ namespace Azure.Functions.Cli.Actions.ChatActions
                     SystemMessage = new SystemMessageConfig
                     {
                         Content = ChatAgentInstructions.SystemPrompt
-                    }
+                    },
+                    McpServers = new Dictionary<string, object>
+                    {
+                        ["manvir-templates"] = new McpLocalServerConfig
+                        {
+                            Type = "local",
+                            Command = "npx",
+                            Args = ["-y", "manvir-templates-mcp-server"],
+                            Tools = ["*"],
+                        },
+                    },
                 });
 
                 // Set up event handlers
@@ -61,7 +75,7 @@ namespace Azure.Functions.Cli.Actions.ChatActions
                         Console.WriteLine();
                     }
 
-                    if (ev is ToolExecutionStartEvent toolEvent)
+                    if (ev is ToolExecutionStartEvent toolEvent && StaticSettings.IsDebug)
                     {
                         ColoredConsole.WriteLine();
                         ColoredConsole.WriteLine(AdditionalInfoColor($"[Executing: {toolEvent.Data.ToolName}]"));
