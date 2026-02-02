@@ -15,6 +15,7 @@
   <ItemGroup>
     <PackageVersion Include="Autofac" Version="4.6.2" />
     <PackageVersion Include="Azure.Identity" Version="1.14.2" />
+    <PackageVersion Include="GitHub.Copilot.SDK" Version="0.1.18" />
     <PackageVersion Include="Azure.Security.KeyVault.Secrets" Version="4.7.0" />
     <PackageVersion Include="AccentedCommandLineParser" Version="2.0.0" />
     <PackageVersion Include="Microsoft.ApplicationInsights" Version="2.22.0" />
@@ -27,7 +28,7 @@
     <PackageVersion Include="System.Formats.Asn1" Version="6.0.1" />
     <PackageVersion Include="YamlDotNet" Version="6.0.0" />
     <!-- Transitive dependency -->
-    <PackageVersion Include="System.Text.Json" Version="8.0.5" />
+    <PackageVersion Include="System.Text.Json" Version="10.0.0" />
   </ItemGroup>
   <!-- workers -->
   <ItemGroup>
