@@ -22,5 +22,16 @@ namespace Azure.Functions.Cli.Interfaces
 
         // Kill all child processes spawned by the current process.
         internal void KillChildProcesses();
+
+        /// <summary>
+        /// Register a docker container ID for cleanup on process exit.
+        /// </summary>
+        /// <param name="containerId">Docker container ID.</param>
+        internal void RegisterDockerContainer(string containerId);
+
+        /// <summary>
+        /// Stop all registered docker containers.
+        /// </summary>
+        internal void StopDockerContainers();
     }
 }

@@ -43,6 +43,8 @@ namespace Azure.Functions.Cli.Actions.HostActions
         private readonly IProcessManager _processManager;
         private readonly KeyVaultReferencesManager _keyVaultReferencesManager;
         private IConfigurationRoot _hostJsonConfig;
+        private string _dashboardContainerId;
+        private string _dashboardBrowserToken;
 
         public StartHostAction(ISecretsManager secretsManager, IProcessManager processManager)
         {
@@ -86,6 +88,8 @@ namespace Azure.Functions.Cli.Actions.HostActions
         public string JsonOutputFile { get; set; }
 
         public string HostRuntime { get; set; }
+
+        public bool Dashboard { get; set; }
 
         public override ICommandLineParserResult ParseArgs(string[] args)
         {
@@ -178,6 +182,12 @@ namespace Azure.Functions.Cli.Actions.HostActions
                .Setup<string>("runtime")
                .WithDescription($"If provided, determines which version of the host to start. Allowed values are '{DotnetConstants.InProc6HostRuntime}', '{DotnetConstants.InProc8HostRuntime}', and 'default' (which runs the out-of-process host).")
                .Callback(startHostFromRuntime => HostRuntime = startHostFromRuntime);
+
+            Parser
+               .Setup<bool>("dashboard")
+               .WithDescription("Start the Functions dashboard for monitoring and diagnostics.")
+               .SetDefault(false)
+               .Callback(dashboard => Dashboard = dashboard);
 
             // Verbose logging now follows the global --verbose flag
             VerboseLogging = GlobalCoreToolsSettings.IsVerbose;
@@ -432,6 +442,16 @@ namespace Azure.Functions.Cli.Actions.HostActions
                 return;
             }
 
+            // Start the dashboard if requested
+            if (Dashboard)
+            {
+                await StartDashboardAsync();
+
+                // Configure OpenTelemetry to send telemetry to the dashboard
+                Environment.SetEnvironmentVariable("AzureFunctionsJobHost__telemetryMode", "OpenTelemetry");
+                Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
+            }
+
             Utilities.WarnIfPreviewVersion();
 
             Utilities.PrintSupportInformation();
@@ -491,7 +511,15 @@ namespace Azure.Functions.Cli.Actions.HostActions
                 ColoredConsole.WriteLine(AdditionalInfoColor("For detailed output, run func with --verbose flag."));
             }
 
-            await runTask;
+            try
+            {
+                await runTask;
+            }
+            finally
+            {
+                // Stop the dashboard container if it was started
+                await StopDashboardAsync();
+            }
         }
 
         private async Task<bool> TryHandleInProcDotNetLaunchAsync()
@@ -891,6 +919,156 @@ namespace Azure.Functions.Cli.Actions.HostActions
         private void PrintMigrationWarningForDotnet6Inproc()
         {
             ColoredConsole.WriteLine(WarningColor($".NET 6 is no longer supported. Please consider migrating to a supported version. For more information, see https://aka.ms/azure-functions/dotnet/net8-in-process. If you intend to target .NET 8 on the in-process model, make sure that '{Constants.InProcDotNet8EnabledSetting}' is set to '1' in {Constants.LocalSettingsJsonFileName}.\n"));
+        }
+
+        private async Task StartDashboardAsync()
+        {
+            _dashboardBrowserToken = Guid.NewGuid().ToString();
+
+            ColoredConsole.WriteLine("Starting Functions dashboard...");
+
+            var dockerRunArgs = $"run --rm -d -p 18891:18891 -p 18888:18888 -p 4317:18889 " +
+                $"-e ASPNETCORE_URLS=http://0.0.0.0:18888 " +
+                $"-e Dashboard__Mcp__EndpointUrl=http://0.0.0.0:18891 " +
+                $"-e Dashboard__Mcp__PublicUrl=http://localhost:18891 " +
+                $"-e Dashboard__Mcp__AuthMode=Unsecured " +
+                $"-e Dashboard__Frontend__BrowserToken={_dashboardBrowserToken} " +
+                $"-e Dashboard__Frontend__EndpointUrls=http://0.0.0.0:18888 " +
+                $"-e Dashboard__Frontend__PublicUrl=http://localhost:18888 " +
+                $"mcr.microsoft.com/dotnet/aspire-dashboard:latest";
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = dockerRunArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            try
+            {
+                using var process = Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    throw new CliException("Failed to start Docker process.");
+                }
+
+                var containerId = await process.StandardOutput.ReadToEndAsync();
+                var errorOutput = await process.StandardError.ReadToEndAsync();
+
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    ColoredConsole.WriteLine(ErrorColor($"Failed to start dashboard container: {errorOutput}"));
+                    throw new CliException($"Docker exited with code {process.ExitCode}: {errorOutput}");
+                }
+
+                _dashboardContainerId = containerId.Trim();
+
+                if (string.IsNullOrEmpty(_dashboardContainerId))
+                {
+                    throw new CliException("Failed to get container ID from Docker.");
+                }
+
+                var dashboardUrl = $"http://localhost:18888/login?t={_dashboardBrowserToken}";
+                ColoredConsole.WriteLine();
+                ColoredConsole.WriteLine(AdditionalInfoColor($"Dashboard started. Open the following URL in your browser:"));
+                ColoredConsole.WriteLine(HttpFunctionUrlColor($"    {dashboardUrl}"));
+                ColoredConsole.WriteLine();
+
+                // Wait for the dashboard's OTLP endpoint to be ready
+                await WaitForDashboardReadyAsync();
+            }
+            catch (Exception ex) when (ex is not CliException)
+            {
+                ColoredConsole.WriteLine(ErrorColor($"Failed to start dashboard: {ex.Message}"));
+                ColoredConsole.WriteLine(WarningColor("Make sure Docker is installed and running."));
+                throw new CliException($"Failed to start dashboard container: {ex.Message}");
+            }
+        }
+
+        private async Task StopDashboardAsync()
+        {
+            if (string.IsNullOrEmpty(_dashboardContainerId))
+            {
+                return;
+            }
+
+            ColoredConsole.WriteLine("Stopping dashboard...");
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = $"stop {_dashboardContainerId}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            try
+            {
+                using var process = Process.Start(processStartInfo);
+                if (process != null)
+                {
+                    await process.WaitForExitAsync();
+
+                    if (process.ExitCode == 0)
+                    {
+                        ColoredConsole.WriteLine(VerboseColor("Dashboard stopped."));
+                    }
+                    else
+                    {
+                        var errorOutput = await process.StandardError.ReadToEndAsync();
+                        ColoredConsole.WriteLine(WarningColor($"Failed to stop dashboard container: {errorOutput}"));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ColoredConsole.WriteLine(WarningColor($"Failed to stop dashboard container: {ex.Message}"));
+            }
+            finally
+            {
+                _dashboardContainerId = null;
+            }
+        }
+
+        private async Task WaitForDashboardReadyAsync()
+        {
+            const int maxRetries = 30;
+            const int delayMs = 500;
+
+            ColoredConsole.Write("Waiting for dashboard to be ready");
+
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+            for (int i = 0; i < maxRetries; i++)
+            {
+                try
+                {
+                    // Check if the dashboard frontend is responding
+                    var response = await httpClient.GetAsync("http://localhost:18888");
+                    if (response.IsSuccessStatusCode)
+                    {
+                        ColoredConsole.WriteLine(VerboseColor(" Ready!"));
+                        return;
+                    }
+                }
+                catch
+                {
+                    // Dashboard not ready yet, continue waiting
+                }
+
+                ColoredConsole.Write(".");
+                await Task.Delay(delayMs);
+            }
+
+            ColoredConsole.WriteLine();
+            ColoredConsole.WriteLine(WarningColor("Dashboard may not be fully ready. Some early telemetry might be missed."));
         }
 
         /// <summary>

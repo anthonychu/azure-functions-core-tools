@@ -9,6 +9,7 @@ namespace Azure.Functions.Cli.Common
     internal class ProcessManager : IProcessManager
     {
         private IList<Process> _childProcesses;
+        private IList<string> _dockerContainers;
 
         public IProcessInfo GetCurrentProcess()
         {
@@ -54,6 +55,54 @@ namespace Azure.Functions.Cli.Common
 
             _childProcesses.Add(childProcess);
             return true;
+        }
+
+        public void RegisterDockerContainer(string containerId)
+        {
+            if (string.IsNullOrEmpty(containerId))
+            {
+                return;
+            }
+
+            _dockerContainers ??= new List<string>();
+
+            if (!_dockerContainers.Contains(containerId))
+            {
+                _dockerContainers.Add(containerId);
+            }
+        }
+
+        public void StopDockerContainers()
+        {
+            if (_dockerContainers == null || _dockerContainers.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var containerId in _dockerContainers.ToList())
+            {
+                try
+                {
+                    var processStartInfo = new ProcessStartInfo
+                    {
+                        FileName = "docker",
+                        Arguments = $"stop {containerId}",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    };
+
+                    using var process = Process.Start(processStartInfo);
+                    process?.WaitForExit(TimeSpan.FromSeconds(10));
+                }
+                catch
+                {
+                    // Ignore errors during cleanup
+                }
+            }
+
+            _dockerContainers.Clear();
         }
     }
 }

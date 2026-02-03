@@ -47,6 +47,7 @@ namespace Azure.Functions.Cli
             {
                 if (ex.CancellationToken == _forceShutdownCts.Token)
                 {
+                    processManager?.StopDockerContainers();
                     processManager?.KillChildProcesses();
                     Process.GetCurrentProcess().Kill();
                 }
@@ -56,6 +57,7 @@ namespace Azure.Functions.Cli
         private static void CurrentDomain_ProcessExit(object sender, EventArgs e)
         {
             var processManager = _container.Resolve<IProcessManager>();
+            processManager?.StopDockerContainers();
             processManager?.KillChildProcesses();
         }
 

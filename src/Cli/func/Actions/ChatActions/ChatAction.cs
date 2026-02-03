@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Azure.Functions.Cli.Common;
@@ -45,7 +46,7 @@ namespace Azure.Functions.Cli.Actions.ChatActions
                 {
                     Model = "claude-opus-4.5",
                     Streaming = true,
-                    Tools = [],
+                    Tools = DashboardMcpTools.GetTools().ToList(),
                     SystemMessage = new SystemMessageConfig
                     {
                         Content = ChatAgentInstructions.SystemPrompt
@@ -117,6 +118,17 @@ namespace Azure.Functions.Cli.Actions.ChatActions
                             Prompt = userInput,
                         },
                         timeout: TimeSpan.FromMinutes(5));
+                }
+
+                // Stop the client before dispose to ensure clean shutdown of spawned processes
+                try
+                {
+                    ColoredConsole.WriteLine(AdditionalInfoColor("Cleaning up..."));
+                    await client.StopAsync();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // Client may already be disposed, ignore
                 }
             }
             catch (Exception ex)
