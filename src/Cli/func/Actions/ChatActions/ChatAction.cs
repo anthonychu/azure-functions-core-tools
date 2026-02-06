@@ -19,7 +19,7 @@ namespace Azure.Functions.Cli.Actions.ChatActions
         public override async Task RunAsync()
         {
             ColoredConsole.WriteLine(TitleColor("Welcome to Azure Functions Chat!"));
-            ColoredConsole.WriteLine("I can help you create new Function Apps or troubleshoot deployed ones.");
+            ColoredConsole.WriteLine("I can help you create new Function Apps or troubleshoot local or deployed ones.");
             ColoredConsole.WriteLine("Type 'exit' or 'quit' to end the session.");
             ColoredConsole.WriteLine();
 
@@ -44,7 +44,7 @@ namespace Azure.Functions.Cli.Actions.ChatActions
 
                 await using var session = await client.CreateSessionAsync(new SessionConfig
                 {
-                    Model = "claude-opus-4.5",
+                    Model = "claude-opus-4.6",
                     Streaming = true,
                     Tools = DashboardMcpTools.GetTools().ToList(),
                     SystemMessage = new SystemMessageConfig
@@ -58,6 +58,12 @@ namespace Azure.Functions.Cli.Actions.ChatActions
                             Type = "local",
                             Command = "npx",
                             Args = ["-y", "manvir-templates-mcp-server"],
+                            Tools = ["*"],
+                        },
+                        ["microsoft-learn"] = new McpRemoteServerConfig
+                        {
+                            Type = "http",
+                            Url = "https://learn.microsoft.com/api/mcp",
                             Tools = ["*"],
                         },
                     },
