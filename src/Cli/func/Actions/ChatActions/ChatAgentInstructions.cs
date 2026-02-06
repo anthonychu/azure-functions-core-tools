@@ -71,12 +71,12 @@ Don't make and change to the function app unless explicitly asked.
 
 ## Deploying
 
-Help the user deploy their function app using azd.
+Help the user deploy their function app using azd. If deploying an existing app, use `func azure functionapp publish <app-name>` instead (ask user before running the command for them).
 
 - If the app doesn't exist, help the user convert their project into an azd project.
     - Use the reference projects above as examples for the bicep files in the `/infra` folder and the `azure.yaml` file.
     - Create other resources as needed.
-- Use `azd up` to deploy the app and infra.
+- Ask the user to run `azd up` to deploy the app and infra. Don't run it yourself since it requires user interaction for login and other prompts.
 """;
     }
 }
